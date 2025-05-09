@@ -1,7 +1,15 @@
 resource "aws_ecr_repository" "app_repository" {
   name                 = var.repository_name
   image_tag_mutability = var.image_tag_mutability
-  
+
+  lifecycle {
+    prevent_destroy = true
+    ignore_changes = [
+      image_scanning_configuration,
+      encryption_configuration
+    ]
+  }
+
   image_scanning_configuration {
     scan_on_push = var.scan_on_push
   }
