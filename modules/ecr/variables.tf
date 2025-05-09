@@ -8,7 +8,11 @@ variable "image_tag_mutability" {
   type        = string
   default     = "MUTABLE"
 }
-
+variable "force_delete" {
+  description = "Whether to force delete the repository even if it contains images"
+  type        = bool
+  default     = true
+}
 variable "scan_on_push" {
   description = "Habilitar/desabilitar escaneamento de imagem ao fazer push"
   type        = bool
