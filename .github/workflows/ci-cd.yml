@@ -8,8 +8,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-deploy:
+  # JOB 1: Build da imagem e envio para o ECR
+  build:
+    name: Build e Push para ECR
     runs-on: ubuntu-latest
+    outputs:
+      image_uri: ${{ steps.build-image.outputs.image_uri }}
+      image_tag: ${{ github.sha }}
     
     steps:
     - name: Checkout código
@@ -26,89 +31,129 @@ jobs:
     - name: Verificar Credenciais
       run: |
         aws sts get-caller-identity
-        aws ecr describe-repositories || echo "Nenhum repositório ECR encontrado, mas a conexão foi estabelecida"
     
     - name: Configurar Terraform
       uses: hashicorp/setup-terraform@v2
       with:
         terraform_version: 1.0.0
         
-    - name: Terraform Init e Validar
+    - name: Terraform Init
       run: |
         cd application
         terraform init
-        terraform validate
     
-    # Primeiro criaremos o repositório ECR
-    - name: Terraform Apply apenas para ECR
+    # Criar o repositório ECR se não existir
+    - name: Criar Repositório ECR
       run: |
         cd application
         terraform apply -auto-approve -target=module.ecr_repository
-        # Salvar a URL do repositório ECR em um arquivo para uso posterior
-        terraform output -raw ecr_repository_url > /tmp/ecr_repository_url.txt
+        # Salvar informações do repositório ECR 
+        echo "ECR_REPOSITORY_NAME=$(terraform output -raw ecr_repository_name)" >> $GITHUB_ENV
+        echo "ECR_REPOSITORY_URL=$(terraform output -raw ecr_repository_url)" >> $GITHUB_ENV
+        echo "Repositório ECR criado com sucesso: $ECR_REPOSITORY_NAME"
     
-    # Agora fazemos login no ECR criado
+    # Login no ECR
     - name: Login no Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
       
-    # Construir e enviar a imagem para o ECR
-    - name: Build, tag, e push da imagem para Amazon ECR
+    # Build e Push
+    - name: Build e Push da Imagem
       id: build-image
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: ${{ env.ECR_REPOSITORY_NAME }}
         IMAGE_TAG: ${{ github.sha }}
       run: |
-        # Obter a URL do repositório ECR do arquivo
-        ECR_REPOSITORY_URL=$(cat /tmp/ecr_repository_url.txt)
-        # Extrair o nome do repositório da URL
-        ECR_REPOSITORY=$(echo $ECR_REPOSITORY_URL | awk -F/ '{print $2}')
-        echo "Repositório ECR: $ECR_REPOSITORY"
+        echo "Verificando informações do ECR:"
+        echo "Registry: $ECR_REGISTRY"
+        echo "Repository: $ECR_REPOSITORY"
+        echo "Tag: $IMAGE_TAG"
         
         # Navegar para o diretório que contém o Dockerfile
         cd app
         
-        # Corrigir o Dockerfile se necessário - precisamos que ele use 'dev' em vez de 'start'
+        # Corrigir o Dockerfile se necessário
         if grep -q "CMD \[\"npm\", \"start\"\]" Dockerfile; then
           sed -i 's/CMD \["npm", "start"\]/CMD \["npm", "run", "dev"\]/' Dockerfile
           echo "Corrigido o comando no Dockerfile"
         fi
         
         # Build da imagem Docker
+        echo "Construindo imagem: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
         
+        # Verificar imagens construídas
+        docker images | grep $ECR_REPOSITORY
+        
         # Push da imagem para o ECR
+        echo "Enviando imagem para o ECR..."
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
         
-        # Salvar o URI da imagem para uso nos próximos passos
-        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+        # Salvar a URI da imagem para o próximo job
+        IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+        echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+        echo "Imagem construída e enviada com sucesso: $IMAGE_URI"
+
+  # JOB 2: Deploy da aplicação no cluster EKS
+  deploy:
+    name: Deploy no EKS
+    runs-on: ubuntu-latest
+    needs: build  # Depende do job de build
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
     
-    # Aplicar o restante da configuração Terraform
-    - name: Terraform Apply completo
-      if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v3
+      
+    - name: Configurar AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: eu-central-1
+    
+    - name: Configurar Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.0.0
+        
+    - name: Terraform Init
       run: |
         cd application
-        terraform apply -auto-approve -var="app_image_tag=${{ github.sha }}" -var="use_ecr_image=true"
-        
-    - name: Verificar Deployment
-      if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+        terraform init
+    
+    # Aplicar configuração completa do Terraform
+    - name: Deploy da Aplicação
       run: |
-        # Instalar kubectl
+        cd application
+        echo "Aplicando configuração Terraform com a nova imagem..."
+        terraform apply -auto-approve -var="app_image_tag=${{ needs.build.outputs.image_tag }}" -var="use_ecr_image=true"
+        echo "Terraform aplicado com sucesso!"
+        
+    # Verificar o deployment
+    - name: Verificar Deployment
+      run: |
+        echo "Instalando kubectl..."
         curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
         chmod +x kubectl
         sudo mv kubectl /usr/local/bin/
         
-        # Configurar o kubectl para o cluster EKS
+        echo "Configurando kubectl para o cluster EKS..."
         aws eks update-kubeconfig --name eksDeepDiveFrankfurt --region eu-central-1
         
-        # Verificar o status do deployment
+        echo "Verificando o status do deployment..."
         kubectl get deployment todo-app-03
+        kubectl get pods -l app=todo-app-03
       
-    - name: Extrair URL da aplicação
-      if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    # Exibir a URL da aplicação
+    - name: Exibir URL da Aplicação
       run: |
         cd application
         LOAD_BALANCER_URL=$(terraform output -raw app_url || echo "URL não disponível")
-        echo "A aplicação está disponível em: $LOAD_BALANCER_URL"
+        echo "============================================="
+        echo "🚀 A aplicação foi implantada com sucesso!"
+        echo "📱 Acesse a aplicação em: $LOAD_BALANCER_URL"
+        echo "============================================="
