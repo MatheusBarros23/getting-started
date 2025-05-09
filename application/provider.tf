@@ -17,6 +17,5 @@ terraform {
     key            = "todo-app/terraform.tfstate"
     region         = "eu-central-1"
     encrypt        = true
-    dynamodb_table = "terraform-lock-table"
   }
 }
