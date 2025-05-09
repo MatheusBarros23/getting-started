@@ -137,7 +137,32 @@ jobs:
       run: |
         cd application
         terraform init
-    
+
+    - name: Importar Recursos Existentes
+      run: |
+        cd application
+        
+        # Verificar se os recursos já estão no estado do Terraform
+        if ! terraform state list | grep -q "aws_iam_role.node_group_role"; then
+          echo "Importando IAM Role para o estado do Terraform..."
+          # Tentativa de importar o IAM Role (ignorando erros)
+          terraform import aws_iam_role.node_group_role[0] eksDeepDiveFrankfurt-application-nodes-role || echo "Erro ao importar IAM Role, continuando..."
+        else
+          echo "IAM Role já existe no estado do Terraform."
+        fi
+        
+        if ! terraform state list | grep -q "module.ecr_repository.aws_ecr_repository.app_repository"; then
+          echo "Importando ECR Repository para o estado do Terraform..."
+          # Tentativa de importar o ECR Repository (ignorando erros)
+          terraform import module.ecr_repository.aws_ecr_repository.app_repository todo-app-03-ecr || echo "Erro ao importar ECR Repository, continuando..."
+        else
+          echo "ECR Repository já existe no estado do Terraform."
+        fi
+        
+        # Obter o ID da conta AWS para uso no IAM Role ARN
+        ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+        echo "ACCOUNT_ID=$ACCOUNT_ID" >> $GITHUB_ENV
+
     # Aplicar configuração completa do Terraform
     - name: Deploy da Aplicação
       run: |
