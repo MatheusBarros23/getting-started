@@ -1,0 +1,63 @@
+name: Destroy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_destroy:
+        description: 'Digite "DESTROY" para confirmar que deseja destruir toda a infraestrutura'
+        required: true
+        type: string
+
+jobs:
+  validate-input:
+    name: Validar Confirmação
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verificar confirmação
+        if: github.event.inputs.confirm_destroy != 'DESTROY'
+        run: |
+          echo "Você deve digitar 'DESTROY' exatamente para confirmar a destruição."
+          echo "Você digitou: '${{ github.event.inputs.confirm_destroy }}'"
+          exit 1
+          
+  destroy:
+    name: Destroy Infrastructure
+    needs: validate-input
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v3
+      
+    - name: Configurar AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: eu-central-1
+        mask-aws-account-id: 'no'
+        
+    - name: Verificar Credenciais
+      run: |
+        aws sts get-caller-identity
+    
+    - name: Configurar Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.0.0
+        
+    - name: Terraform Init
+      run: |
+        cd application
+        terraform init
+
+    # Primeiro, destruir apenas os recursos Kubernetes
+    - name: Destruir recursos Kubernetes
+      run: |
+        cd application
+        echo "Destruindo recursos Kubernetes..."
+        terraform destroy -auto-approve
+        
+        echo "============================================="
+        echo "🧹 Processo de destruição concluído!"
+        echo "============================================="
