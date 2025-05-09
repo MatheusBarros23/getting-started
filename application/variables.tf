@@ -14,7 +14,7 @@ variable "cluster_name" {
 variable "node_group_name" {
   description = "Nome do node group"
   type        = string
-  default     = "application-nodes"
+  default     = "node-groups-03"
 }
 
 variable "create_node_role" {
