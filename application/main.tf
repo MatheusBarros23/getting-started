@@ -127,6 +127,7 @@ resource "aws_eks_node_group" "application" {
   ]
 }
 
+# Criar repositório ECR
 module "ecr_repository" {
   source = "../modules/ecr"
 
@@ -138,7 +139,7 @@ module "kubernetes_app" {
   source = "../modules/kubernetes-app"
 
   app_name    = "todo-app-03"
-  app_image   = var.app_image
+  app_image   = var.use_ecr_image ? "${module.ecr_repository.repository_url}:${var.app_image_tag}" : var.app_image
   app_port    = var.app_port
   app_replicas = var.app_replicas
   
