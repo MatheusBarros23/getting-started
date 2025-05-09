@@ -21,48 +21,68 @@ jobs:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: eu-central-1
+        mask-aws-account-id: 'no'
         
-    - name: Login no Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v1
-      
-    - name: Build, tag, e push da imagem para Amazon ECR
-      id: build-image
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        ECR_REPOSITORY: todo-app-03-ecr
-        IMAGE_TAG: ${{ github.sha }}
+    - name: Verificar Credenciais
       run: |
-        cd app
-
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
-        
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-        
-        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-        
+        aws sts get-caller-identity
+        aws ecr describe-repositories || echo "Nenhum repositório ECR encontrado, mas a conexão foi estabelecida"
+    
     - name: Configurar Terraform
       uses: hashicorp/setup-terraform@v2
       with:
         terraform_version: 1.0.0
         
-    - name: Terraform Init
+    - name: Terraform Init e Validar
       run: |
         cd application
         terraform init
-      
-    - name: Terraform Plan
+        terraform validate
+    
+    # Primeiro criaremos o repositório ECR
+    - name: Terraform Apply apenas para ECR
       run: |
         cd application
-        terraform plan -var="ecr_repository_name=todo-app-03-ecr" -var="app_image_tag=${{ github.sha }}" -var="use_ecr_image=true"
+        terraform apply -auto-approve -target=module.ecr_repository
+        echo "ECR_REPOSITORY_URL=$(terraform output -raw ecr_repository_url)" >> $GITHUB_ENV
+    
+    # Agora fazemos login no ECR criado
+    - name: Login no Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
       
-    - name: Terraform Apply
+    # Construir e enviar a imagem para o ECR
+    - name: Build, tag, e push da imagem para Amazon ECR
+      id: build-image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        # Garantir que temos o nome correto do repositório ECR
+        ECR_REPOSITORY=$(echo $ECR_REPOSITORY_URL | sed -e 's|.*amazonaws.com/||')
+        echo "Repositório ECR: $ECR_REPOSITORY"
+        
+        # Navegar para o diretório que contém o Dockerfile
+        cd app
+        
+        # Build da imagem Docker
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+        
+        # Push da imagem para o ECR
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        
+        # Salvar o URI da imagem para uso nos próximos passos
+        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+        echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
+    
+    # Aplicar o restante da configuração Terraform
+    - name: Terraform Apply completo
       if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
       run: |
         cd application
-        terraform apply -auto-approve -var="ecr_repository_name=todo-app-03-ecr" -var="app_image_tag=${{ github.sha }}" -var="use_ecr_image=true"
+        terraform apply -auto-approve -var="app_image_tag=${{ github.sha }}" -var="use_ecr_image=true"
         
     - name: Verificar Deployment
       if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
