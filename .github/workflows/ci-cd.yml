@@ -46,24 +46,24 @@ jobs:
     - name: Criar Repositório ECR
       run: |
         cd application
-        # Obter o nome do repositório da variável diretamente do arquivo
-        REPO_NAME="todo-app-03-ecr"  # Defina diretamente o nome conhecido
+        # Usar hardcoded values para evitar problemas com o output
+        REPO_NAME="todo-app-03-ecr"
         
-        # Aplicar o Terraform
-        terraform apply -auto-approve -target=module.ecr_repository
+        # Verificar se o repositório existe, se não, criar
+        if ! aws ecr describe-repositories --repository-names $REPO_NAME 2>/dev/null; then
+          echo "Criando repositório ECR..."
+          terraform apply -auto-approve -target=module.ecr_repository
+        else
+          echo "Repositório ECR já existe, pulando criação."
+        fi
         
-        # Obter o URL do ECR diretamente da AWS CLI
+        # Obter URL do repositório
         ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
         REPO_URL="${ACCOUNT_ID}.dkr.ecr.eu-central-1.amazonaws.com/${REPO_NAME}"
         
-        # Verificar se o repositório existe
-        aws ecr describe-repositories --repository-names $REPO_NAME
-        
-        # Definir variáveis de ambiente
+        # Definir variáveis
         echo "ECR_REPOSITORY_NAME=$REPO_NAME" >> $GITHUB_ENV
         echo "ECR_REPOSITORY_URL=$REPO_URL" >> $GITHUB_ENV
-        
-        echo "Repositório ECR URL: $REPO_URL"
     
     # Login no ECR
     - name: Login no Amazon ECR
@@ -142,8 +142,15 @@ jobs:
     - name: Deploy da Aplicação
       run: |
         cd application
+        
+        # Excluir o módulo ECR do apply para evitar conflitos
         echo "Aplicando configuração Terraform com a nova imagem..."
-        terraform apply -auto-approve -var="app_image_tag=${{ needs.build.outputs.image_tag }}" -var="use_ecr_image=true"
+        terraform apply -auto-approve \
+          -var="app_image_tag=${{ needs.build.outputs.image_tag }}" \
+          -var="use_ecr_image=true" \
+          -var="ecr_repository_name=todo-app-03-ecr" \
+          -target=module.kubernetes_app
+        
         echo "Terraform aplicado com sucesso!"
         
     # Verificar o deployment
