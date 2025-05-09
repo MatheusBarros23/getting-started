@@ -99,10 +99,30 @@ variable "tags" {
   default     = {}
 }
 
+# Variáveis para ECR
+variable "ecr_repository_name" {
+  description = "Nome do repositório ECR"
+  type        = string
+  default     = "todo-app-03-ecr"
+}
+
+# Variáveis para a aplicação
 variable "app_image" {
   description = "Imagem Docker da aplicação"
   type        = string
   default     = "matheusprb/getting-started:latest"
+}
+
+variable "app_image_tag" {
+  description = "Tag da imagem Docker da aplicação no ECR"
+  type        = string
+  default     = "latest"
+}
+
+variable "use_ecr_image" {
+  description = "Se deve usar a imagem do ECR"
+  type        = bool
+  default     = true
 }
 
 variable "app_port" {
@@ -128,11 +148,4 @@ variable "cluster_certificate_authority_data" {
   type        = string
   default     = ""
   sensitive   = true
-}
-
-# Variáveis para ECR
-variable "ecr_repository_name" {
-  description = "Nome do repositório ECR"
-  type        = string
-  default     = "todo-app-ecr"
 }
