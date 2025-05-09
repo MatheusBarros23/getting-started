@@ -44,7 +44,8 @@ jobs:
       run: |
         cd application
         terraform apply -auto-approve -target=module.ecr_repository
-        echo "ECR_REPOSITORY_URL=$(terraform output -raw ecr_repository_url)" >> $GITHUB_ENV
+        # Salvar a URL do repositório ECR em um arquivo para uso posterior
+        terraform output -raw ecr_repository_url > /tmp/ecr_repository_url.txt
     
     # Agora fazemos login no ECR criado
     - name: Login no Amazon ECR
@@ -58,12 +59,20 @@ jobs:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
       run: |
-        # Garantir que temos o nome correto do repositório ECR
-        ECR_REPOSITORY=$(echo $ECR_REPOSITORY_URL | sed -e 's|.*amazonaws.com/||')
+        # Obter a URL do repositório ECR do arquivo
+        ECR_REPOSITORY_URL=$(cat /tmp/ecr_repository_url.txt)
+        # Extrair o nome do repositório da URL
+        ECR_REPOSITORY=$(echo $ECR_REPOSITORY_URL | awk -F/ '{print $2}')
         echo "Repositório ECR: $ECR_REPOSITORY"
         
         # Navegar para o diretório que contém o Dockerfile
         cd app
+        
+        # Corrigir o Dockerfile se necessário - precisamos que ele use 'dev' em vez de 'start'
+        if grep -q "CMD \[\"npm\", \"start\"\]" Dockerfile; then
+          sed -i 's/CMD \["npm", "start"\]/CMD \["npm", "run", "dev"\]/' Dockerfile
+          echo "Corrigido o comando no Dockerfile"
+        fi
         
         # Build da imagem Docker
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
@@ -75,7 +84,6 @@ jobs:
         
         # Salvar o URI da imagem para uso nos próximos passos
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-        echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
     
     # Aplicar o restante da configuração Terraform
     - name: Terraform Apply completo
