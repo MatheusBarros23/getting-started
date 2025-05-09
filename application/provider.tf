@@ -13,7 +13,7 @@ terraform {
   }
 
   backend "s3" {
-    bucket         = "to-do-03-terraform-state"
+    bucket         = bucket-terraform-mprb-jvvc"
     key            = "todo-app/terraform.tfstate"
     region         = "eu-central-1"
     encrypt        = true
