@@ -32,9 +32,3 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
-
-variable "create_if_not_exists" {
-  description = "Se o Terraform deve tentar criar o repositório apenas se ele não existir"
-  type        = bool
-  default     = true
-}
