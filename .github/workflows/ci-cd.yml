@@ -1,0 +1,87 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v3
+      
+    - name: Configurar AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: eu-central-1
+        
+    - name: Login no Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+      
+    - name: Build, tag, e push da imagem para Amazon ECR
+      id: build-image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: todo-app-03-ecr
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        # Build da imagem Docker
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+        
+        # Push da imagem para o ECR
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        
+        # Salvar o URI da imagem para uso nos próximos passos
+        echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+        
+    - name: Configurar Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.0.0
+        
+    - name: Terraform Init
+      run: |
+        cd application
+        terraform init
+      
+    - name: Terraform Plan
+      run: |
+        cd application
+        terraform plan -var="app_image_tag=${{ github.sha }}"
+      
+    - name: Terraform Apply
+      if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+      run: |
+        cd application
+        terraform apply -auto-approve -var="app_image_tag=${{ github.sha }}"
+        
+    - name: Verificar Deployment
+      if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+      run: |
+        # Instalar kubectl
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
+        
+        # Configurar o kubectl para o cluster EKS
+        aws eks update-kubeconfig --name eksDeepDiveFrankfurt --region eu-central-1
+        
+        # Verificar o status do deployment
+        kubectl get deployment todo-app-03
+      
+    - name: Extrair URL da aplicação
+      if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+      run: |
+        cd application
+        LOAD_BALANCER_URL=$(terraform output -raw app_url || echo "URL não disponível")
+        echo "A aplicação está disponível em: $LOAD_BALANCER_URL"
