@@ -11,12 +11,12 @@ terraform {
       version = ">= 2.10.0"
     }
   }
-}
 
-backend "s3" {
-  bucket         = "seu-bucket-terraform-state"
-  key            = "todo-app/terraform.tfstate"
-  region         = "eu-central-1"
-  encrypt        = true
-  dynamodb_table = "terraform-lock-table"
+  backend "s3" {
+    bucket         = "seu-bucket-terraform-state"
+    key            = "todo-app/terraform.tfstate"
+    region         = "eu-central-1"
+    encrypt        = true
+    dynamodb_table = "terraform-lock-table"
+  }
 }
