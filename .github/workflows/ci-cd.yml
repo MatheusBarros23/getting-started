@@ -7,10 +7,6 @@ on:
     branches: [ master ]
   workflow_dispatch:
 
-env:
-  ECR_REPOSITORY_NAME: todo-app-03-ecr
-  AWS_REGION: eu-central-1
-
 jobs:
   # JOB 1: Build da imagem e envio para o ECR
   build:
@@ -29,7 +25,7 @@ jobs:
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+        aws-region: eu-central-1
         mask-aws-account-id: 'no'
         
     - name: Verificar Credenciais
@@ -45,85 +41,16 @@ jobs:
       run: |
         cd application
         terraform init
-        
-    # Modificar o arquivo main.tf para usar create_before_destroy
-    - name: Configurar Terraform para lidar com recursos existentes
-      run: |
-        echo "Ajustando a configuração do módulo ECR..."
-        cat > modules/ecr/main.tf <<EOF
-resource "aws_ecr_repository" "app_repository" {
-  name                 = var.repository_name
-  image_tag_mutability = var.image_tag_mutability
-  
-  # Isto permite que o Terraform atualize corretamente recursos existentes
-  lifecycle {
-    # Impede que o Terraform tente destruir e recriar o recurso
-    prevent_destroy = true
-    # Ignora alterações específicas que podem causar recriações desnecessárias
-    ignore_changes = [
-      image_scanning_configuration,
-      encryption_configuration
-    ]
-  }
-  
-  image_scanning_configuration {
-    scan_on_push = var.scan_on_push
-  }
-
-  encryption_configuration {
-    encryption_type = var.encryption_type
-  }
-
-  tags = var.tags
-}
-
-# Política de lifecycle para manter apenas um número específico de imagens
-resource "aws_ecr_lifecycle_policy" "app_lifecycle_policy" {
-  repository = aws_ecr_repository.app_repository.name
-
-  policy = jsonencode({
-    rules = [
-      {
-        rulePriority = 1
-        description  = "Keep last \${var.image_count_to_keep} images"
-        selection = {
-          tagStatus     = "any"
-          countType     = "imageCountMoreThan"
-          countNumber   = var.image_count_to_keep
-        }
-        action = {
-          type = "expire"
-        }
-      }
-    ]
-  })
-}
-EOF
-        
-    # Aplicar apenas o módulo ECR com a opção refresh-only 
-    - name: Verificar e Sincronizar Estado do ECR
+    
+    # Criar o repositório ECR se não existir
+    - name: Criar Repositório ECR
       run: |
         cd application
-        echo "Sincronizando o estado do Terraform com o ECR existente..."
-        terraform apply -refresh-only -auto-approve
-        
-    # Aplicar apenas o módulo ECR para garantir que existe
-    - name: Criar/Atualizar Repositório ECR
-      run: |
-        cd application
-        echo "Aplicando apenas a configuração do ECR..."
-        # Usando o flag -target para aplicar apenas o módulo ECR e suprimindo erros de saída
-        terraform apply -auto-approve -target=module.ecr_repository || true
-        
-        # Verificar e exportar detalhes do ECR
-        ECR_REPOSITORY_URL=$(terraform output -raw ecr_repository_url || echo "")
-        if [ -z "$ECR_REPOSITORY_URL" ]; then
-          echo "Buscando informações do repositório ECR via AWS CLI..."
-          ECR_REPOSITORY_URL=$(aws ecr describe-repositories --repository-names $ECR_REPOSITORY_NAME --query 'repositories[0].repositoryUri' --output text || echo "")
-        fi
-        
-        echo "Repositório ECR URL: $ECR_REPOSITORY_URL"
-        echo "ECR_REPOSITORY_URL=$ECR_REPOSITORY_URL" >> $GITHUB_ENV
+        terraform apply -auto-approve -target=module.ecr_repository
+        # Salvar informações do repositório ECR 
+        echo "ECR_REPOSITORY_NAME=$(terraform output -raw ecr_repository_name)" >> $GITHUB_ENV
+        echo "ECR_REPOSITORY_URL=$(terraform output -raw ecr_repository_url)" >> $GITHUB_ENV
+        echo "Repositório ECR criado com sucesso: $ECR_REPOSITORY_NAME"
     
     # Login no ECR
     - name: Login no Amazon ECR
@@ -157,6 +84,9 @@ EOF
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
         
+        # Verificar imagens construídas
+        docker images | grep $ECR_REPOSITORY
+        
         # Push da imagem para o ECR
         echo "Enviando imagem para o ECR..."
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
@@ -183,7 +113,7 @@ EOF
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+        aws-region: eu-central-1
     
     - name: Configurar Terraform
       uses: hashicorp/setup-terraform@v2
@@ -195,69 +125,12 @@ EOF
         cd application
         terraform init
     
-    # Modificar o arquivo main.tf para usar prevent_destroy também no job de deploy
-    - name: Configurar Terraform para lidar com recursos existentes
-      run: |
-        echo "Ajustando a configuração do módulo ECR..."
-        cat > modules/ecr/main.tf <<EOF
-resource "aws_ecr_repository" "app_repository" {
-  name                 = var.repository_name
-  image_tag_mutability = var.image_tag_mutability
-  
-  # Isto permite que o Terraform atualize corretamente recursos existentes
-  lifecycle {
-    # Impede que o Terraform tente destruir e recriar o recurso
-    prevent_destroy = true
-    # Ignora alterações específicas que podem causar recriações desnecessárias
-    ignore_changes = [
-      image_scanning_configuration,
-      encryption_configuration
-    ]
-  }
-  
-  image_scanning_configuration {
-    scan_on_push = var.scan_on_push
-  }
-
-  encryption_configuration {
-    encryption_type = var.encryption_type
-  }
-
-  tags = var.tags
-}
-
-# Política de lifecycle para manter apenas um número específico de imagens
-resource "aws_ecr_lifecycle_policy" "app_lifecycle_policy" {
-  repository = aws_ecr_repository.app_repository.name
-
-  policy = jsonencode({
-    rules = [
-      {
-        rulePriority = 1
-        description  = "Keep last \${var.image_count_to_keep} images"
-        selection = {
-          tagStatus     = "any"
-          countType     = "imageCountMoreThan"
-          countNumber   = var.image_count_to_keep
-        }
-        action = {
-          type = "expire"
-        }
-      }
-    ]
-  })
-}
-EOF
-    
     # Aplicar configuração completa do Terraform
     - name: Deploy da Aplicação
       run: |
         cd application
         echo "Aplicando configuração Terraform com a nova imagem..."
-        terraform apply -auto-approve \
-          -var="app_image_tag=${{ needs.build.outputs.image_tag }}" \
-          -var="use_ecr_image=true" \
-          -var="ecr_repository_name=$ECR_REPOSITORY_NAME"
+        terraform apply -auto-approve -var="app_image_tag=${{ needs.build.outputs.image_tag }}" -var="use_ecr_image=true"
         echo "Terraform aplicado com sucesso!"
         
     # Verificar o deployment
@@ -269,7 +142,7 @@ EOF
         sudo mv kubectl /usr/local/bin/
         
         echo "Configurando kubectl para o cluster EKS..."
-        aws eks update-kubeconfig --name eksDeepDiveFrankfurt --region $AWS_REGION
+        aws eks update-kubeconfig --name eksDeepDiveFrankfurt --region eu-central-1
         
         echo "Verificando o status do deployment..."
         kubectl get deployment todo-app-03
