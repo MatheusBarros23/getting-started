@@ -41,16 +41,26 @@ jobs:
       run: |
         cd application
         terraform init
-    
-    # Criar o repositório ECR se não existir
+
+
     - name: Criar Repositório ECR
       run: |
         cd application
         terraform apply -auto-approve -target=module.ecr_repository
-        # Salvar informações do repositório ECR 
-        echo "ECR_REPOSITORY_NAME=$(terraform output -raw ecr_repository_name)" >> $GITHUB_ENV
-        echo "ECR_REPOSITORY_URL=$(terraform output -raw ecr_repository_url)" >> $GITHUB_ENV
-        echo "Repositório ECR criado com sucesso: $ECR_REPOSITORY_NAME"
+        
+        # Capturar saídas em variáveis separadas primeiro e verificá-las
+        REPO_NAME=$(terraform output -raw ecr_repository_name)
+        REPO_URL=$(terraform output -raw ecr_repository_url)
+        
+        # Verificar se as variáveis foram capturadas corretamente
+        echo "Nome do repositório capturado: $REPO_NAME"
+        echo "URL do repositório capturada: $REPO_URL"
+        
+        # Definir as variáveis de ambiente sem caracteres extras
+        echo "ECR_REPOSITORY_NAME=$REPO_NAME" >> $GITHUB_ENV
+        echo "ECR_REPOSITORY_URL=$REPO_URL" >> $GITHUB_ENV
+        
+        echo "Repositório ECR criado com sucesso: $REPO_NAME"
     
     # Login no ECR
     - name: Login no Amazon ECR
