@@ -10,6 +10,7 @@ Sua estrutura final deve ser algo assim:
 ├── .github/
 │   └── workflows/
 │       └── ci-cd.yml
+│       └── destroy.yml
 ├── app/
 │   ├── Dockerfile
 │   ├── package.json
